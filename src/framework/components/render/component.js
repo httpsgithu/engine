@@ -1,12 +1,10 @@
-import { RefCountedObject } from '../../../core/ref-counted-object.js';
-
 import { LAYERID_WORLD, RENDERSTYLE_SOLID } from '../../../scene/constants.js';
 import { BatchGroup } from '../../../scene/batching/batch-group.js';
 import { MeshInstance } from '../../../scene/mesh-instance.js';
-import { SkinInstance } from '../../../scene/skin-instance.js';
 import { MorphInstance } from '../../../scene/morph-instance.js';
 import { getShapePrimitive } from '../../../scene/procedural.js';
 import { GraphNode } from '../../../scene/graph-node.js';
+import { SkinInstanceCache } from '../../../scene/skin-instance-cache.js';
 
 import { Asset } from '../../../asset/asset.js';
 import { AssetReference } from '../../../asset/asset-reference.js';
@@ -14,15 +12,6 @@ import { AssetReference } from '../../../asset/asset-reference.js';
 import { Component } from '../component.js';
 
 import { EntityReference } from '../../utils/entity-reference.js';
-
-// Class used as an entry in the ref-counted skin instance cache
-class SkinInstanceCachedObject extends RefCountedObject {
-    constructor(skin, skinInstance) {
-        super();
-        this.skin = skin;
-        this.skinInstance = skinInstance;
-    }
-}
 
 /**
  * @component
@@ -34,13 +23,13 @@ class SkinInstanceCachedObject extends RefCountedObject {
  * @param {RenderComponentSystem} system - The ComponentSystem that created this Component.
  * @param {Entity} entity - The Entity that this Component is attached to.
  * @property {string} type The type of the render. Can be one of the following:
- * * "asset": The component will render a render asset
- * * "box": The component will render a box (1 unit in each dimension)
- * * "capsule": The component will render a capsule (radius 0.5, height 2)
- * * "cone": The component will render a cone (radius 0.5, height 1)
- * * "cylinder": The component will render a cylinder (radius 0.5, height 1)
- * * "plane": The component will render a plane (1 unit in each dimension)
- * * "sphere": The component will render a sphere (radius 0.5)
+ * - "asset": The component will render a render asset
+ * - "box": The component will render a box (1 unit in each dimension)
+ * - "capsule": The component will render a capsule (radius 0.5, height 2)
+ * - "cone": The component will render a cone (radius 0.5, height 1)
+ * - "cylinder": The component will render a cylinder (radius 0.5, height 1)
+ * - "plane": The component will render a plane (1 unit in each dimension)
+ * - "sphere": The component will render a sphere (radius 0.5)
  * @property {Asset|number} asset The render asset for the render component (only applies to type 'asset') - can also be an asset id.
  * @property {Asset[]|number[]} materialAssets The material assets that will be used to render the meshes. Each material corresponds to the respective mesh instance.
  * @property {Material} material The material {@link Material} that will be used to render the meshes (not used on renders of type 'asset').
@@ -50,7 +39,7 @@ class SkinInstanceCachedObject extends RefCountedObject {
  * @property {boolean} lightmapped If true, the meshes will be lightmapped after using lightmapper.bake().
  * @property {number} lightmapSizeMultiplier Lightmap resolution multiplier.
  * @property {boolean} isStatic Mark meshes as non-movable (optimization).
- * @property {BoundingBox} aabb If set, the bounding box is used as a bounding box for visibility culling of attached mesh instances. This is an optimization,
+ * @property {BoundingBox} customAabb If set, the object space bounding box is used as a bounding box for visibility culling of attached mesh instances. This is an optimization,
  * allowing oversized bounding box to be specified for skinned characters in order to avoid per frame bounding box computations based on bone positions.
  * @property {MeshInstance[]} meshInstances An array of meshInstances contained in the component. If meshes are not set or loaded for component it will return null.
  * @property {number} batchGroupId Assign meshes to a specific batch group (see {@link BatchGroup}). Default value is -1 (no group).
@@ -58,12 +47,12 @@ class SkinInstanceCachedObject extends RefCountedObject {
  * Don't push/pop/splice or modify this array, if you want to change it - set a new one instead.
  * @property {Entity} rootBone A reference to the entity to be used as the root bone for any skinned meshes that are rendered by this component.
  * @property {number} renderStyle Set rendering of all {@link MeshInstance}s to the specified render style. Can be one of the following:
- * * {@link RENDERSTYLE_SOLID}
- * * {@link RENDERSTYLE_WIREFRAME}
- * * {@link RENDERSTYLE_POINTS}
+ * - {@link RENDERSTYLE_SOLID}
+ * - {@link RENDERSTYLE_WIREFRAME}
+ * - {@link RENDERSTYLE_POINTS}
  */
 class RenderComponent extends Component {
-    constructor(system, entity)   {
+    constructor(system, entity) {
         super(system, entity);
 
         this._type = 'asset';
@@ -80,7 +69,7 @@ class RenderComponent extends Component {
         this._renderStyle = RENDERSTYLE_SOLID;
 
         // bounding box which can be set to override bounding box based on mesh
-        this._aabb = null;
+        this._customAabb = null;
 
         // area - used by lightmapper
         this._area = null;
@@ -109,108 +98,11 @@ class RenderComponent extends Component {
         // material asset references
         this._materialReferences = [];
 
+        // handle events when the entity is directly (or indirectly as a child of sub-hierarchy) added or removed from the parent
         entity.on('remove', this.onRemoveChild, this);
+        entity.on('removehierarchy', this.onRemoveChild, this);
         entity.on('insert', this.onInsertChild, this);
-    }
-
-    // map of SkinInstances allowing those to be shared between render components
-    // (specifically a single glb with multiple render components)
-    // maps rootBone to an array of SkinInstanceCachedObject
-    // this allows to find if a skin instance already exists for a rootbone, and a specific skin
-    static _skinInstanceCache = new Map();
-
-    // #if _DEBUG
-    // function that logs out the state of the skin instances cache
-    static logCachedSkinInstances() {
-        console.log("CachedSkinInstances");
-        RenderComponent._skinInstanceCache.forEach(function (array, rootBone) {
-            console.log(rootBone.name + ': Array(' + array.length + ")");
-            for (let i = 0; i < array.length; i++) {
-                console.log("  " + i + ": RefCount " + array[i].getRefCount());
-            }
-        });
-    }
-    // #endif
-
-    // returns already created skin instance from skin, for use on the rootBone
-    // ref count of existing skinInstance is increased
-    static getCachedSkinInstance(skin, rootBone) {
-
-        let skinInstance = null;
-
-        // get an array of cached object for the rootBone
-        const cachedObjArray = RenderComponent._skinInstanceCache.get(rootBone);
-        if (cachedObjArray) {
-
-            // find matching skin
-            const cachedObj = cachedObjArray.find((element) => element.skin === skin);
-            if (cachedObj) {
-                cachedObj.incRefCount();
-                skinInstance = cachedObj.skinInstance;
-            }
-        }
-
-        return skinInstance;
-    }
-
-    // adds skin instance to the cache, and increases ref count on it
-    static addCachedSkinInstance(skin, rootBone, skinInstance) {
-
-        // get an array for the rootBone
-        let cachedObjArray = RenderComponent._skinInstanceCache.get(rootBone);
-        if (!cachedObjArray) {
-            cachedObjArray = [];
-            RenderComponent._skinInstanceCache.set(rootBone, cachedObjArray);
-        }
-
-        // find entry for the skin
-        let cachedObj = cachedObjArray.find((element) => element.skin === skin);
-        if (!cachedObj) {
-            cachedObj = new SkinInstanceCachedObject(skin, skinInstance);
-            cachedObjArray.push(cachedObj);
-        }
-
-        cachedObj.incRefCount();
-    }
-
-    // removes skin instance from the cache. This decreases ref count, and when that reaches 0 it gets destroyed
-    static removeCachedSkinInstance(skinInstance) {
-
-        if (skinInstance) {
-            const rootBone = skinInstance.rootBone;
-            if (rootBone) {
-
-                // an array for boot bone
-                const cachedObjArray = RenderComponent._skinInstanceCache.get(rootBone);
-                if (cachedObjArray) {
-
-                    // actual skin instance
-                    const cachedObjIndex = cachedObjArray.findIndex((element) => element.skinInstance === skinInstance);
-                    if (cachedObjIndex >= 0) {
-
-                        // dec ref on the object
-                        const cachedObj = cachedObjArray[cachedObjIndex];
-                        cachedObj.decRefCount();
-
-                        // last reference, needs to be destroyed
-                        if (cachedObj.getRefCount() === 0) {
-                            cachedObjArray.splice(cachedObjIndex, 1);
-
-                            // if the array is empty
-                            if (!cachedObjArray.length) {
-                                RenderComponent._skinInstanceCache.delete(rootBone);
-                            }
-
-                            // destroy the skin instance
-                            if (skinInstance) {
-                                skinInstance.destroy();
-                                cachedObj.skinInstance = null;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        entity.on('inserthierarchy', this.onInsertChild, this);
     }
 
     _onSetRootBone(entity) {
@@ -222,19 +114,21 @@ class RenderComponent extends Component {
     _onRootBoneChanged() {
         // remove existing skin instances and create new ones, connected to new root bone
         this._clearSkinInstances();
-        this._cloneSkinInstances();
+        if (this.enabled && this.entity.enabled) {
+            this._cloneSkinInstances();
+        }
     }
 
     destroyMeshInstances() {
 
-        var meshInstances = this._meshInstances;
+        const meshInstances = this._meshInstances;
         if (meshInstances) {
             this.removeFromLayers();
 
             // destroy mesh instances separately to allow them to be removed from the cache
             this._clearSkinInstances();
 
-            for (var i = 0; i < meshInstances.length; i++) {
+            for (let i = 0; i < meshInstances.length; i++) {
                 meshInstances[i].destroy();
             }
             this._meshInstances.length = 0;
@@ -243,7 +137,7 @@ class RenderComponent extends Component {
 
     addToLayers() {
         const layers = this.system.app.scene.layers;
-        for (var i = 0; i < this._layers.length; i++) {
+        for (let i = 0; i < this._layers.length; i++) {
             const layer = layers.getLayerById(this._layers[i]);
             if (layer) {
                 layer.addMeshInstances(this._meshInstances);
@@ -252,12 +146,10 @@ class RenderComponent extends Component {
     }
 
     removeFromLayers() {
-
         if (this._meshInstances && this._meshInstances.length) {
-
-            var layer, layers = this.system.app.scene.layers;
-            for (var i = 0; i < this._layers.length; i++) {
-                layer = layers.getLayerById(this._layers[i]);
+            const layers = this.system.app.scene.layers;
+            for (let i = 0; i < this._layers.length; i++) {
+                const layer = layers.getLayerById(this._layers[i]);
                 if (layer) {
                     layer.removeMeshInstances(this._meshInstances);
                 }
@@ -294,22 +186,24 @@ class RenderComponent extends Component {
     }
 
     onLayerAdded(layer) {
-        var index = this.layers.indexOf(layer.id);
+        const index = this.layers.indexOf(layer.id);
         if (index < 0) return;
         layer.addMeshInstances(this._meshInstances);
     }
 
     onLayerRemoved(layer) {
-        var index = this.layers.indexOf(layer.id);
+        const index = this.layers.indexOf(layer.id);
         if (index < 0) return;
         layer.removeMeshInstances(this._meshInstances);
     }
 
     onEnable() {
-        var app = this.system.app;
-        var scene = app.scene;
+        const app = this.system.app;
+        const scene = app.scene;
 
         this._rootBone.onParentComponentEnable();
+
+        this._cloneSkinInstances();
 
         scene.on("set:layers", this.onLayersChanged, this);
         if (scene.layers) {
@@ -317,7 +211,7 @@ class RenderComponent extends Component {
             scene.layers.on("remove", this.onLayerRemoved, this);
         }
 
-        var isAsset = (this._type === 'asset');
+        const isAsset = (this._type === 'asset');
         if (this._meshInstances && this._meshInstances.length) {
             this.addToLayers();
         } else if (isAsset && this.asset) {
@@ -325,7 +219,7 @@ class RenderComponent extends Component {
         }
 
         // load materials
-        for (var i = 0; i < this._materialReferences.length; i++) {
+        for (let i = 0; i < this._materialReferences.length; i++) {
             if (this._materialReferences[i].asset) {
                 this.system.app.assets.load(this._materialReferences[i].asset);
             }
@@ -337,8 +231,8 @@ class RenderComponent extends Component {
     }
 
     onDisable() {
-        var app = this.system.app;
-        var scene = app.scene;
+        const app = this.system.app;
+        const scene = app.scene;
 
         scene.off("set:layers", this.onLayersChanged, this);
         if (scene.layers) {
@@ -363,7 +257,7 @@ class RenderComponent extends Component {
      */
     hide() {
         if (this._meshInstances) {
-            for (var i = 0; i < this._meshInstances.length; i++) {
+            for (let i = 0; i < this._meshInstances.length; i++) {
                 this._meshInstances[i].visible = false;
             }
         }
@@ -377,7 +271,7 @@ class RenderComponent extends Component {
      */
     show() {
         if (this._meshInstances) {
-            for (var i = 0; i < this._meshInstances.length; i++) {
+            for (let i = 0; i < this._meshInstances.length; i++) {
                 this._meshInstances[i].visible = true;
             }
         }
@@ -399,7 +293,7 @@ class RenderComponent extends Component {
         this.destroyMeshInstances();
 
         if (this._assetReference.asset) {
-            var render = this._assetReference.asset.resource;
+            const render = this._assetReference.asset.resource;
             render.off('set:meshes', this._onSetMeshes, this);
             render.on('set:meshes', this._onSetMeshes, this);
             if (render.meshes) {
@@ -414,11 +308,11 @@ class RenderComponent extends Component {
 
     _clearSkinInstances() {
 
-        for (var i = 0; i < this._meshInstances.length; i++) {
+        for (let i = 0; i < this._meshInstances.length; i++) {
             const meshInstance = this._meshInstances[i];
 
             // remove it from the cache
-            RenderComponent.removeCachedSkinInstance(meshInstance.skinInstance);
+            SkinInstanceCache.removeCachedSkinInstance(meshInstance.skinInstance);
             meshInstance.skinInstance = null;
         }
     }
@@ -427,47 +321,13 @@ class RenderComponent extends Component {
 
         if (this._meshInstances.length && this._rootBone.entity instanceof GraphNode) {
 
-            var j, skin, skinInst;
-
-            for (var i = 0; i < this._meshInstances.length; i++) {
-                var meshInstance = this._meshInstances[i];
-                var mesh = meshInstance.mesh;
+            for (let i = 0; i < this._meshInstances.length; i++) {
+                const meshInstance = this._meshInstances[i];
+                const mesh = meshInstance.mesh;
 
                 // if skinned but does not have instance created yet
                 if (mesh.skin && !mesh.skinInstance) {
-
-                    skin = mesh.skin;
-                    const rootBone = this._rootBone.entity;
-
-                    // try and get skin instance from the cache
-                    skinInst = RenderComponent.getCachedSkinInstance(skin, rootBone);
-
-                    // don't have skin instance for this skin
-                    if (!skinInst) {
-
-                        skinInst = new SkinInstance(skin);
-                        skinInst.rootBone = rootBone;
-
-                        // add it to the cache
-                        RenderComponent.addCachedSkinInstance(skin, rootBone, skinInst);
-
-                        // Resolve bone IDs to actual graph nodes
-                        var bones = [];
-                        for (j = 0; j < skin.boneNames.length; j++) {
-                            var boneName = skin.boneNames[j];
-                            var bone = this._rootBone.entity.findByName(boneName);
-
-                            if (!bone) {
-                                console.error("Failed to find bone [" + boneName + "] in the entity hierarchy, RenderComponent on " + this.entity.name + ", rootBone: " + this._rootBone.entity.name);
-                                bone = this.entity;
-                            }
-
-                            bones.push(bone);
-                        }
-                        skinInst.bones = bones;
-                    }
-
-                    meshInstance.skinInstance = skinInst;
+                    meshInstance.skinInstance = SkinInstanceCache.createCachedSkinedInstance(mesh.skin, this._rootBone.entity, this.entity);
                 }
             }
         }
@@ -478,14 +338,14 @@ class RenderComponent extends Component {
         if (meshes && meshes.length) {
 
             // cloned mesh instances
-            var meshInstances = [];
+            const meshInstances = [];
 
-            for (var i = 0; i < meshes.length; i++) {
+            for (let i = 0; i < meshes.length; i++) {
 
                 // mesh instance
-                var mesh = meshes[i];
-                var material = this._materialReferences[i] && this._materialReferences[i].asset && this._materialReferences[i].asset.resource;
-                var meshInst = new MeshInstance(mesh, material || this.system.defaultMaterial, this.entity);
+                const mesh = meshes[i];
+                const material = this._materialReferences[i] && this._materialReferences[i].asset && this._materialReferences[i].asset.resource;
+                const meshInst = new MeshInstance(mesh, material || this.system.defaultMaterial, this.entity);
                 meshInstances.push(meshInst);
 
                 // morph instance
@@ -556,18 +416,18 @@ class RenderComponent extends Component {
         }
     }
 
-    get aabb() {
-        return this._aabb;
+    get customAabb() {
+        return this._customAabb;
     }
 
-    set aabb(value) {
-        this._aabb = value;
+    set customAabb(value) {
+        this._customAabb = value;
 
         // set it on meshInstances
-        var mi = this._meshInstances;
+        const mi = this._meshInstances;
         if (mi) {
-            for (var i = 0; i < mi.length; i++) {
-                mi[i].setOverrideAabb(this._aabb);
+            for (let i = 0; i < mi.length; i++) {
+                mi[i].setCustomAabb(this._customAabb);
             }
         }
     }
@@ -585,14 +445,14 @@ class RenderComponent extends Component {
             this.destroyMeshInstances();
 
             if (value !== 'asset') {
-                var material = this._material;
+                let material = this._material;
                 if (!material || material === this.system.defaultMaterial) {
                     material = this._materialReferences[0] &&
                                 this._materialReferences[0].asset &&
                                 this._materialReferences[0].asset.resource;
                 }
 
-                var primData = getShapePrimitive(this.system.app.graphicsDevice, value);
+                const primData = getShapePrimitive(this.system.app.graphicsDevice, value);
                 this._area = primData.area;
                 this.meshInstances = [new MeshInstance(primData.mesh, material || this.system.defaultMaterial, this.entity)];
             }
@@ -612,7 +472,7 @@ class RenderComponent extends Component {
         if (this._meshInstances) {
 
             const mi = this._meshInstances;
-            for (var i = 0; i < mi.length; i++) {
+            for (let i = 0; i < mi.length; i++) {
 
                 // if mesh instance was created without a node, assign it here
                 if (!mi[i].node) {
@@ -624,7 +484,7 @@ class RenderComponent extends Component {
                 mi[i].isStatic = this._isStatic;
                 mi[i].renderStyle = this._renderStyle;
                 mi[i].setLightmapped(this._lightmapped);
-                mi[i].setOverrideAabb(this._aabb);
+                mi[i].setCustomAabb(this._customAabb);
             }
 
             if (this.enabled && this.entity.enabled) {
@@ -641,9 +501,9 @@ class RenderComponent extends Component {
         if (value !== this._lightmapped) {
             this._lightmapped = value;
 
-            var mi = this._meshInstances;
+            const mi = this._meshInstances;
             if (mi) {
-                for (var i = 0; i < mi.length; i++) {
+                for (let i = 0; i < mi.length; i++) {
                     mi[i].setLightmapped(value);
                 }
             }
@@ -657,27 +517,27 @@ class RenderComponent extends Component {
     set castShadows(value) {
         if (this._castShadows !== value) {
 
-            var i, layer, mi = this._meshInstances;
+            const mi = this._meshInstances;
 
             if (mi) {
-                var layers = this.layers;
-                var scene = this.system.app.scene;
+                const layers = this.layers;
+                const scene = this.system.app.scene;
                 if (this._castShadows && !value) {
-                    for (i = 0; i < layers.length; i++) {
-                        layer = scene.layers.getLayerById(this.layers[i]);
+                    for (let i = 0; i < layers.length; i++) {
+                        const layer = scene.layers.getLayerById(this.layers[i]);
                         if (layer) {
                             layer.removeShadowCasters(mi);
                         }
                     }
                 }
 
-                for (i = 0; i < mi.length; i++) {
+                for (let i = 0; i < mi.length; i++) {
                     mi[i].castShadow = value;
                 }
 
                 if (!this._castShadows && value) {
-                    for (i = 0; i < layers.length; i++) {
-                        layer = scene.layers.getLayerById(layers[i]);
+                    for (let i = 0; i < layers.length; i++) {
+                        const layer = scene.layers.getLayerById(layers[i]);
                         if (layer) {
                             layer.addShadowCasters(mi);
                         }
@@ -698,9 +558,9 @@ class RenderComponent extends Component {
 
             this._receiveShadows = value;
 
-            var mi = this._meshInstances;
+            const mi = this._meshInstances;
             if (mi) {
-                for (var i = 0; i < mi.length; i++) {
+                for (let i = 0; i < mi.length; i++) {
                     mi[i].receiveShadow = value;
                 }
             }
@@ -731,9 +591,9 @@ class RenderComponent extends Component {
         if (this._isStatic !== value) {
             this._isStatic = value;
 
-            var mi = this._meshInstances;
+            const mi = this._meshInstances;
             if (mi) {
-                for (var i = 0; i < mi.length; i++) {
+                for (let i = 0; i < mi.length; i++) {
                     mi[i].isStatic = value;
                 }
             }
@@ -745,12 +605,12 @@ class RenderComponent extends Component {
     }
 
     set layers(value) {
-
-        var i, layer, layers = this.system.app.scene.layers;
+        const layers = this.system.app.scene.layers;
+        let layer;
 
         if (this._meshInstances) {
             // remove all meshinstances from old layers
-            for (i = 0; i < this._layers.length; i++) {
+            for (let i = 0; i < this._layers.length; i++) {
                 layer = layers.getLayerById(this._layers[i]);
                 if (layer) {
                     layer.removeMeshInstances(this._meshInstances);
@@ -760,7 +620,7 @@ class RenderComponent extends Component {
 
         // set the layer list
         this._layers.length = 0;
-        for (i = 0; i < value.length; i++) {
+        for (let i = 0; i < value.length; i++) {
             this._layers[i] = value[i];
         }
 
@@ -768,7 +628,7 @@ class RenderComponent extends Component {
         if (!this.enabled || !this.entity.enabled || !this._meshInstances) return;
 
         // add all mesh instances to new layers
-        for (i = 0; i < this._layers.length; i++) {
+        for (let i = 0; i < this._layers.length; i++) {
             layer = layers.getLayerById(this._layers[i]);
             if (layer) {
                 layer.addMeshInstances(this._meshInstances);
@@ -783,7 +643,7 @@ class RenderComponent extends Component {
     set batchGroupId(value) {
         if (this._batchGroupId !== value) {
 
-            var batcher = this.system.app.batcher;
+            const batcher = this.system.app.batcher;
             if (this.entity.enabled && this._batchGroupId >= 0) {
                 batcher.remove(BatchGroup.RENDER, this.batchGroupId, this.entity);
             }
@@ -809,7 +669,7 @@ class RenderComponent extends Component {
             this._material = value;
 
             if (this._meshInstances && this._type !== 'asset') {
-                for (var i = 0; i < this._meshInstances.length; i++) {
+                for (let i = 0; i < this._meshInstances.length; i++) {
                     this._meshInstances[i].material = value;
                 }
             }
@@ -822,17 +682,15 @@ class RenderComponent extends Component {
         });
     }
 
-    set materialAssets(value) {
-        var i;
-        value = value || [];
+    set materialAssets(value = []) {
         if (this._materialReferences.length > value.length) {
-            for (i = value.length; i < this._materialReferences.length; i++) {
+            for (let i = value.length; i < this._materialReferences.length; i++) {
                 this._materialReferences[i].id = null;
             }
             this._materialReferences.length = value.length;
         }
 
-        for (i = 0; i < value.length; i++) {
+        for (let i = 0; i < value.length; i++) {
             if (!this._materialReferences[i]) {
                 this._materialReferences.push(
                     new AssetReference(
@@ -850,7 +708,7 @@ class RenderComponent extends Component {
             }
 
             if (value[i]) {
-                var id = value[i] instanceof Asset ? value[i].id : value[i];
+                const id = value[i] instanceof Asset ? value[i].id : value[i];
                 if (this._materialReferences[i].id !== id) {
                     this._materialReferences[i].id = id;
                 }
@@ -873,7 +731,7 @@ class RenderComponent extends Component {
     }
 
     set asset(value) {
-        var id = (value instanceof Asset ? value.id : value);
+        const id = (value instanceof Asset ? value.id : value);
         if (this._assetReference.id === id) return;
 
         if (this._assetReference.asset && this._assetReference.asset.resource) {
@@ -885,6 +743,13 @@ class RenderComponent extends Component {
         if (this._assetReference.asset) {
             this._onRenderAssetAdded();
         }
+    }
+
+    resolveDuplicatedEntityReferenceProperties(oldRender, duplicatedIdsMap) {
+        if (oldRender.rootBone && duplicatedIdsMap[oldRender.rootBone]) {
+            this.rootBone = duplicatedIdsMap[oldRender.rootBone];
+        }
+        this._clearSkinInstances();
     }
 }
 

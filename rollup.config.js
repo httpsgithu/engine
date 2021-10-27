@@ -1,12 +1,18 @@
 import babel from '@rollup/plugin-babel';
 import replace from '@rollup/plugin-replace';
+import strip from '@rollup/plugin-strip';
 import { createFilter } from '@rollup/pluginutils';
 import jscc from 'rollup-plugin-jscc';
 import { terser } from 'rollup-plugin-terser';
 import { version } from './package.json';
 
 const execSync = require('child_process').execSync;
-const revision = execSync('git rev-parse --short HEAD').toString().trim();
+let revision;
+try {
+    revision = execSync('git rev-parse --short HEAD').toString().trim();
+} catch (e) {
+    revision = 'unknown';
+}
 
 function getBanner(config) {
     return [
@@ -88,13 +94,6 @@ const es5Options = {
                 }
             }
         ]
-    ],
-    plugins: [
-        [
-            '@babel/plugin-proposal-class-properties', {
-                loose: true
-            }
-        ]
     ]
 };
 
@@ -115,14 +114,11 @@ const moduleOptions = {
                 }
             }
         ]
-    ],
-    plugins: [
-        [
-            '@babel/plugin-proposal-class-properties', {
-                loose: true
-            }
-        ]
     ]
+};
+
+const stripOptions = {
+    functions: ['DeprecatedLog.log']
 };
 
 const target_release_es5 = {
@@ -146,6 +142,7 @@ const target_release_es5 = {
             },
             preventAssignment: true
         }),
+        strip(stripOptions),
         babel(es5Options),
         spacesToTabs()
     ]
@@ -172,6 +169,7 @@ const target_release_es5min = {
             },
             preventAssignment: true
         }),
+        strip(stripOptions),
         babel(es5Options),
         terser()
     ]
@@ -198,6 +196,7 @@ const target_release_es6 = {
             },
             preventAssignment: true
         }),
+        strip(stripOptions),
         babel(moduleOptions),
         spacesToTabs()
     ]
@@ -255,6 +254,7 @@ const target_profiler = {
             },
             preventAssignment: true
         }),
+        strip(stripOptions),
         babel(es5Options),
         spacesToTabs()
     ]

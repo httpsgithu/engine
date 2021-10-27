@@ -25,10 +25,10 @@ import { VertexBuffer } from './vertex-buffer.js';
  * @param {VertexBuffer} inputBuffer - The input vertex buffer.
  * @param {number} [usage] - The optional usage type of the output vertex buffer. Can be:
  *
- * * {@link BUFFER_STATIC}
- * * {@link BUFFER_DYNAMIC}
- * * {@link BUFFER_STREAM}
- * * {@link BUFFER_GPUDYNAMIC}
+ * - {@link BUFFER_STATIC}
+ * - {@link BUFFER_DYNAMIC}
+ * - {@link BUFFER_STREAM}
+ * - {@link BUFFER_GPUDYNAMIC}
  *
  * Defaults to {@link BUFFER_GPUDYNAMIC} (which is recommended for continuous update).
  * @example
@@ -80,7 +80,7 @@ import { VertexBuffer } from './vertex-buffer.js';
 class TransformFeedback {
     constructor(inputBuffer, usage = BUFFER_GPUDYNAMIC) {
         this.device = inputBuffer.device;
-        var gl = this.device.gl;
+        const gl = this.device.gl;
 
         // #if _DEBUG
         if (!inputBuffer.format.interleaved && inputBuffer.format.elements.length > 1) {
@@ -128,7 +128,7 @@ class TransformFeedback {
      * @param {boolean} [swap] - Swap input/output buffer data. Useful for continuous buffer processing. Default is true.
      */
     process(shader, swap = true) {
-        var device = this.device;
+        const device = this.device;
 
         // #if _DEBUG
         device.pushMarker("TransformFeedback");
@@ -158,7 +158,7 @@ class TransformFeedback {
 
         // swap buffers
         if (swap) {
-            var tmp = this._inputBuffer.bufferId;
+            let tmp = this._inputBuffer.bufferId;
             this._inputBuffer.bufferId = this._outputBuffer.bufferId;
             this._outputBuffer.bufferId = tmp;
 

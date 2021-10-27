@@ -1,3 +1,5 @@
+import { AnimEvents } from './anim-events.js';
+
 /**
  * @private
  * @class
@@ -9,14 +11,16 @@
  * @param {AnimData[]} inputs - List of curve key data.
  * @param {AnimData[]} outputs - List of curve value data.
  * @param {AnimCurve[]} curves - The list of curves.
+ * @param {AnimEvents} animEvents - A sequence of animation events.
  */
 class AnimTrack {
-    constructor(name, duration, inputs, outputs, curves) {
+    constructor(name, duration, inputs, outputs, curves, animEvents = new AnimEvents([])) {
         this._name = name;
         this._duration = duration;
         this._inputs = inputs;
         this._outputs = outputs;
         this._curves = curves;
+        this._animEvents = animEvents;
     }
 
     get name() {
@@ -39,29 +43,35 @@ class AnimTrack {
         return this._curves;
     }
 
+    get events() {
+        return this._animEvents.events;
+    }
+
+    set events(animEvents) {
+        this._animEvents = animEvents;
+    }
+
     // evaluate all track curves at the specified time and store results
     // in the provided snapshot.
     eval(time, snapshot) {
         snapshot._time = time;
 
-        var inputs = this._inputs;
-        var outputs = this._outputs;
-        var curves = this._curves;
-        var cache = snapshot._cache;
-        var results = snapshot._results;
-
-        var i;
+        const inputs = this._inputs;
+        const outputs = this._outputs;
+        const curves = this._curves;
+        const cache = snapshot._cache;
+        const results = snapshot._results;
 
         // evaluate inputs
-        for (i = 0; i < inputs.length; ++i) {
+        for (let i = 0; i < inputs.length; ++i) {
             cache[i].update(time, inputs[i]._data);
         }
 
         // evalute outputs
-        for (i = 0; i < curves.length; ++i) {
-            var curve = curves[i];
-            var output = outputs[curve._output];
-            var result = results[i];
+        for (let i = 0; i < curves.length; ++i) {
+            const curve = curves[i];
+            const output = outputs[curve._output];
+            const result = results[i];
             cache[curve._input].eval(result, curve._interpolation, output);
         }
     }

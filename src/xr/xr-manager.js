@@ -1,3 +1,4 @@
+import { platform } from '../core/platform.js';
 import { EventHandler } from '../core/event-handler.js';
 
 import { Mat3 } from '../math/mat3.js';
@@ -6,13 +7,14 @@ import { Quat } from '../math/quat.js';
 import { Vec3 } from '../math/vec3.js';
 import { Vec4 } from '../math/vec4.js';
 
-import { XRTYPE_INLINE, XRTYPE_VR, XRTYPE_AR } from './constants.js';
+import { XRTYPE_INLINE, XRTYPE_VR, XRTYPE_AR, XRDEPTHSENSINGUSAGE_CPU, XRDEPTHSENSINGFORMAT_L8A8 } from './constants.js';
 import { XrHitTest } from './xr-hit-test.js';
 import { XrInput } from './xr-input.js';
 import { XrLightEstimation } from './xr-light-estimation.js';
 import { XrImageTracking } from './xr-image-tracking.js';
 import { XrDomOverlay } from './xr-dom-overlay.js';
 import { XrDepthSensing } from './xr-depth-sensing.js';
+import { XrPlaneDetection } from './xr-plane-detection.js';
 
 /**
  * @class
@@ -20,6 +22,7 @@ import { XrDepthSensing } from './xr-depth-sensing.js';
  * @augments EventHandler
  * @classdesc Manage and update XR session and its states.
  * @description Manage and update XR session and its states.
+ * @hideconstructor
  * @param {Application} app - The main application.
  * @property {boolean} supported True if XR is supported.
  * @property {boolean} active True if XR session is running.
@@ -38,7 +41,7 @@ class XrManager extends EventHandler {
 
         this.app = app;
 
-        this._supported = !! navigator.xr;
+        this._supported = platform.browser && !!navigator.xr;
 
         this._available = { };
 
@@ -57,6 +60,7 @@ class XrManager extends EventHandler {
         this.domOverlay = new XrDomOverlay(this);
         this.hitTest = new XrHitTest(this);
         this.imageTracking = new XrImageTracking(this);
+        this.planeDetection = new XrPlaneDetection(this);
         this.input = new XrInput(this);
         this.lightEstimation = new XrLightEstimation(this);
 
@@ -153,37 +157,48 @@ class XrManager extends EventHandler {
     /**
      * @function
      * @name XrManager#start
-     * @description Attempts to start XR session for provided {@link CameraComponent} and optionally fires callback when session is created or failed to create.
+     * @description Attempts to start XR session for provided {@link CameraComponent} and optionally fires callback when session is created or failed to create. Integrated XR APIs need to be enabled by providing relevant options.
      * @param {CameraComponent} camera - It will be used to render XR session and manipulated based on pose tracking.
      * @param {string} type - Session type. Can be one of the following:
      *
-     * * {@link XRTYPE_INLINE}: Inline - always available type of session. It has limited features availability and is rendered into HTML element.
-     * * {@link XRTYPE_VR}: Immersive VR - session that provides exclusive access to VR device with best available tracking features.
-     * * {@link XRTYPE_AR}: Immersive AR - session that provides exclusive access to VR/AR device that is intended to be blended with real-world environment.
+     * - {@link XRTYPE_INLINE}: Inline - always available type of session. It has limited features availability and is rendered into HTML element.
+     * - {@link XRTYPE_VR}: Immersive VR - session that provides exclusive access to VR device with best available tracking features.
+     * - {@link XRTYPE_AR}: Immersive AR - session that provides exclusive access to VR/AR device that is intended to be blended with real-world environment.
      *
      * @param {string} spaceType - Reference space type. Can be one of the following:
      *
-     * * {@link XRSPACE_VIEWER}: Viewer - always supported space with some basic tracking capabilities.
-     * * {@link XRSPACE_LOCAL}: Local - represents a tracking space with a native origin near the viewer at the time of creation. It is meant for seated or basic local XR sessions.
-     * * {@link XRSPACE_LOCALFLOOR}: Local Floor - represents a tracking space with a native origin at the floor in a safe position for the user to stand. The y axis equals 0 at floor level. Floor level value might be estimated by the underlying platform. It is meant for seated or basic local XR sessions.
-     * * {@link XRSPACE_BOUNDEDFLOOR}: Bounded Floor - represents a tracking space with its native origin at the floor, where the user is expected to move within a pre-established boundary.
-     * * {@link XRSPACE_UNBOUNDED}: Unbounded - represents a tracking space where the user is expected to move freely around their environment, potentially long distances from their starting point.
+     * - {@link XRSPACE_VIEWER}: Viewer - always supported space with some basic tracking capabilities.
+     * - {@link XRSPACE_LOCAL}: Local - represents a tracking space with a native origin near the viewer at the time of creation. It is meant for seated or basic local XR sessions.
+     * - {@link XRSPACE_LOCALFLOOR}: Local Floor - represents a tracking space with a native origin at the floor in a safe position for the user to stand. The y axis equals 0 at floor level. Floor level value might be estimated by the underlying platform. It is meant for seated or basic local XR sessions.
+     * - {@link XRSPACE_BOUNDEDFLOOR}: Bounded Floor - represents a tracking space with its native origin at the floor, where the user is expected to move within a pre-established boundary.
+     * - {@link XRSPACE_UNBOUNDED}: Unbounded - represents a tracking space where the user is expected to move freely around their environment, potentially long distances from their starting point.
      *
      * @example
      * button.on('click', function () {
-     *     app.xr.start(camera, pc.XRTYPE_VR, pc.XRSPACE_LOCAL);
+     *     app.xr.start(camera, pc.XRTYPE_VR, pc.XRSPACE_LOCALFLOOR);
+     * });
+     * @example
+     * button.on('click', function () {
+     *     app.xr.start(camera, pc.XRTYPE_AR, pc.XRSPACE_LOCALFLOOR, {
+     *         depthSensing: { }
+     *     });
      * });
      * @param {object} [options] - Object with additional options for XR session initialization.
      * @param {string[]} [options.optionalFeatures] - Optional features for XRSession start. It is used for getting access to additional WebXR spec extensions.
+     * @param {boolean} [options.imageTracking] - Set to true to attempt to enable {@link XrImageTracking}.
+     * @param {boolean} [options.planeDetection] - Set to true to attempt to enable {@link XrPlaneDetection}.
      * @param {callbacks.XrError} [options.callback] - Optional callback function called once session is started. The callback has one argument Error - it is null if successfully started XR session.
+     * @param {object} [options.depthSensing] - Optional object with depth sensing parameters to attempt to enable {@link XrDepthSensing}.
+     * @param {string} [options.depthSensing.usagePreference] - Optional usage preference for depth sensing, can be 'cpu-optimized' or 'gpu-optimized' (XRDEPTHSENSINGUSAGE_*), defaults to 'cpu-optimized'. Most preferred and supported will be chosen by the underlying depth sensing system.
+     * @param {string} [options.depthSensing.dataFormatPreference] - Optional data format preference for depth sensing, can be 'luminance-alpha' or 'float32' (XRDEPTHSENSINGFORMAT_*), defaults to 'luminance-alpha'. Most preferred and supported will be chosen by the underlying depth sensing system.
      */
     start(camera, type, spaceType, options) {
         let callback = options;
 
-        if (typeof(options) === 'object')
+        if (typeof options === 'object')
             callback = options.callback;
 
-        if (! this._available[type]) {
+        if (!this._available[type]) {
             if (callback) callback(new Error('XR is not available'));
             return;
         }
@@ -216,15 +231,42 @@ class XrManager extends EventHandler {
         if (type === XRTYPE_AR) {
             opts.optionalFeatures.push('light-estimation');
             opts.optionalFeatures.push('hit-test');
-            opts.optionalFeatures.push('depth-sensing');
 
-            if (options && options.imageTracking) {
-                opts.optionalFeatures.push('image-tracking');
+            if (options) {
+                if (options.imageTracking && this.imageTracking.supported)
+                    opts.optionalFeatures.push('image-tracking');
+
+                if (options.planeDetection)
+                    opts.optionalFeatures.push('plane-detection');
             }
 
-            if (this.domOverlay.root) {
+            if (this.domOverlay.supported && this.domOverlay.root) {
                 opts.optionalFeatures.push('dom-overlay');
                 opts.domOverlay = { root: this.domOverlay.root };
+            }
+
+            if (options && options.depthSensing && this.depthSensing.supported) {
+                opts.optionalFeatures.push('depth-sensing');
+
+                const usagePreference = [XRDEPTHSENSINGUSAGE_CPU];
+                const dataFormatPreference = [XRDEPTHSENSINGFORMAT_L8A8];
+
+                if (options.depthSensing.usagePreference) {
+                    const ind = usagePreference.indexOf(options.depthSensing.usagePreference);
+                    if (ind !== -1) usagePreference.splice(ind, 1);
+                    usagePreference.unshift(options.depthSensing.usagePreference);
+                }
+
+                if (options.depthSensing.dataFormatPreference) {
+                    const ind = dataFormatPreference.indexOf(options.depthSensing.dataFormatPreference);
+                    if (ind !== -1) dataFormatPreference.splice(ind, 1);
+                    dataFormatPreference.unshift(options.depthSensing.dataFormatPreference);
+                }
+
+                opts.depthSensing = {
+                    usagePreference: usagePreference,
+                    dataFormatPreference: dataFormatPreference
+                };
             }
         } else if (type === XRTYPE_VR) {
             opts.optionalFeatures.push('hand-tracking');
@@ -233,7 +275,7 @@ class XrManager extends EventHandler {
         if (options && options.optionalFeatures)
             opts.optionalFeatures = opts.optionalFeatures.concat(options.optionalFeatures);
 
-        if (this.imageTracking.images.length) {
+        if (this.imageTracking.supported && this.imageTracking.images.length) {
             this.imageTracking.prepareImages((err, trackedImages) => {
                 if (err) {
                     if (callback) callback(err);
@@ -278,7 +320,7 @@ class XrManager extends EventHandler {
      * @param {callbacks.XrError} [callback] - Optional callback function called once session is started. The callback has one argument Error - it is null if successfully started XR session.
      */
     end(callback) {
-        if (! this._session) {
+        if (!this._session) {
             if (callback) callback(new Error('XR Session is not initialized'));
             return;
         }
@@ -294,9 +336,9 @@ class XrManager extends EventHandler {
      * @description Check if specific type of session is available.
      * @param {string} type - Session type. Can be one of the following:
      *
-     * * {@link XRTYPE_INLINE}: Inline - always available type of session. It has limited features availability and is rendered into HTML element.
-     * * {@link XRTYPE_VR}: Immersive VR - session that provides exclusive access to VR device with best available tracking features.
-     * * {@link XRTYPE_AR}: Immersive AR - session that provides exclusive access to VR/AR device that is intended to be blended with real-world environment.
+     * - {@link XRTYPE_INLINE}: Inline - always available type of session. It has limited features availability and is rendered into HTML element.
+     * - {@link XRTYPE_VR}: Immersive VR - session that provides exclusive access to VR device with best available tracking features.
+     * - {@link XRTYPE_AR}: Immersive AR - session that provides exclusive access to VR/AR device that is intended to be blended with real-world environment.
      *
      * @example
      * if (app.xr.isAvailable(pc.XRTYPE_VR)) {
@@ -361,7 +403,7 @@ class XrManager extends EventHandler {
             session.removeEventListener('end', onEnd);
             session.removeEventListener('visibilitychange', onVisibilityChange);
 
-            if (! failed) this.fire('end');
+            if (!failed) this.fire('end');
 
             // old requestAnimationFrame will never be triggered,
             // so queue up new tick
@@ -407,7 +449,7 @@ class XrManager extends EventHandler {
         this._depthNear = near;
         this._depthFar = far;
 
-        if (! this._session)
+        if (!this._session)
             return;
 
         // if session is available,
@@ -419,7 +461,7 @@ class XrManager extends EventHandler {
     }
 
     update(frame) {
-        if (! this._session) return;
+        if (!this._session) return;
 
         // canvas resolution should be set on first frame availability or resolution changes
         const width = frame.session.renderState.baseLayer.framebufferWidth;
@@ -437,7 +479,7 @@ class XrManager extends EventHandler {
             // add new views into list
             for (let i = 0; i <= (lengthNew - this.views.length); i++) {
                 let view = this.viewsPool.pop();
-                if (! view) {
+                if (!view) {
                     view = {
                         viewport: new Vec4(),
                         projMat: new Mat4(),
@@ -505,6 +547,9 @@ class XrManager extends EventHandler {
 
             if (this.imageTracking.supported)
                 this.imageTracking.update(frame);
+
+            if (this.planeDetection.supported)
+                this.planeDetection.update(frame);
         }
 
         this.fire('update', frame);
@@ -515,7 +560,7 @@ class XrManager extends EventHandler {
     }
 
     get active() {
-        return !! this._session;
+        return !!this._session;
     }
 
     get type() {
@@ -531,7 +576,7 @@ class XrManager extends EventHandler {
     }
 
     get visibilityState() {
-        if (! this._session)
+        if (!this._session)
             return null;
 
         return this._session.visibilityState;

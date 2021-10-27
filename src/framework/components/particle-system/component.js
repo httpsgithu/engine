@@ -80,10 +80,11 @@ const GRAPH_PROPERTIES = [
 const ASSET_PROPERTIES = [
     'colorMapAsset',
     'normalMapAsset',
-    'meshAsset'
+    'meshAsset',
+    'renderAsset'
 ];
 
-var depthLayer;
+let depthLayer;
 
 /**
  * @component
@@ -137,37 +138,38 @@ var depthLayer;
  * @property {Asset} colorMapAsset The {@link Asset} used to set the colorMap.
  * @property {Asset} normalMapAsset The {@link Asset} used to set the normalMap.
  * @property {Asset} meshAsset The {@link Asset} used to set the mesh.
+ * @property {Asset} renderAsset The Render {@link Asset} used to set the mesh.
  * @property {Texture} colorMap The color map texture to apply to all particles in the system. If no texture is assigned, a default spot texture is used.
  * @property {Texture} normalMap The normal map texture to apply to all particles in the system. If no texture is assigned, an approximate spherical normal is calculated for each vertex.
  * @property {number} emitterShape Shape of the emitter. Defines the bounds inside which particles are spawned. Also affects the direction of initial velocity.
  *
- * * {@link EMITTERSHAPE_BOX}: Box shape parameterized by emitterExtents. Initial velocity is directed towards local Z axis.
- * * {@link EMITTERSHAPE_SPHERE}: Sphere shape parameterized by emitterRadius. Initial velocity is directed outwards from the center.
+ * - {@link EMITTERSHAPE_BOX}: Box shape parameterized by emitterExtents. Initial velocity is directed towards local Z axis.
+ * - {@link EMITTERSHAPE_SPHERE}: Sphere shape parameterized by emitterRadius. Initial velocity is directed outwards from the center.
  *
  * @property {number} sort Sorting mode. Forces CPU simulation, so be careful.
  *
- * * {@link PARTICLESORT_NONE}: No sorting, particles are drawn in arbitrary order. Can be simulated on GPU.
- * * {@link PARTICLESORT_DISTANCE}: Sorting based on distance to the camera. CPU only.
- * * {@link PARTICLESORT_NEWER_FIRST}: Newer particles are drawn first. CPU only.
- * * {@link PARTICLESORT_OLDER_FIRST}: Older particles are drawn first. CPU only.
+ * - {@link PARTICLESORT_NONE}: No sorting, particles are drawn in arbitrary order. Can be simulated on GPU.
+ * - {@link PARTICLESORT_DISTANCE}: Sorting based on distance to the camera. CPU only.
+ * - {@link PARTICLESORT_NEWER_FIRST}: Newer particles are drawn first. CPU only.
+ * - {@link PARTICLESORT_OLDER_FIRST}: Older particles are drawn first. CPU only.
  *
  * @property {Mesh} mesh Triangular mesh to be used as a particle. Only first vertex/index buffer is used. Vertex buffer must contain local position at first 3 floats of each vertex.
  * @property {number} blend Controls how particles are blended when being written to the currently active render target.
  * Can be:
  *
- * * {@link BLEND_SUBTRACTIVE}: Subtract the color of the source fragment from the destination fragment and write the result to the frame buffer.
- * * {@link BLEND_ADDITIVE}: Add the color of the source fragment to the destination fragment and write the result to the frame buffer.
- * * {@link BLEND_NORMAL}: Enable simple translucency for materials such as glass. This is equivalent to enabling a source blend mode of {@link BLENDMODE_SRC_ALPHA} and a destination blend mode of {@link BLENDMODE_ONE_MINUS_SRC_ALPHA}.
- * * {@link BLEND_NONE}: Disable blending.
- * * {@link BLEND_PREMULTIPLIED}: Similar to {@link BLEND_NORMAL} expect the source fragment is assumed to have already been multiplied by the source alpha value.
- * * {@link BLEND_MULTIPLICATIVE}: Multiply the color of the source fragment by the color of the destination fragment and write the result to the frame buffer.
- * * {@link BLEND_ADDITIVEALPHA}: Same as {@link BLEND_ADDITIVE} except the source RGB is multiplied by the source alpha.
+ * - {@link BLEND_SUBTRACTIVE}: Subtract the color of the source fragment from the destination fragment and write the result to the frame buffer.
+ * - {@link BLEND_ADDITIVE}: Add the color of the source fragment to the destination fragment and write the result to the frame buffer.
+ * - {@link BLEND_NORMAL}: Enable simple translucency for materials such as glass. This is equivalent to enabling a source blend mode of {@link BLENDMODE_SRC_ALPHA} and a destination blend mode of {@link BLENDMODE_ONE_MINUS_SRC_ALPHA}.
+ * - {@link BLEND_NONE}: Disable blending.
+ * - {@link BLEND_PREMULTIPLIED}: Similar to {@link BLEND_NORMAL} expect the source fragment is assumed to have already been multiplied by the source alpha value.
+ * - {@link BLEND_MULTIPLICATIVE}: Multiply the color of the source fragment by the color of the destination fragment and write the result to the frame buffer.
+ * - {@link BLEND_ADDITIVEALPHA}: Same as {@link BLEND_ADDITIVE} except the source RGB is multiplied by the source alpha.
  *
  * @property {number} orientation Sorting mode. Forces CPU simulation, so be careful.
  *
- * * {@link PARTICLEORIENTATION_SCREEN}: Particles are facing camera.
- * * {@link PARTICLEORIENTATION_WORLD}: User defines world space normal (particleNormal) to set planes orientation.
- * * {@link PARTICLEORIENTATION_EMITTER}: Similar to previous, but the normal is affected by emitter(entity) transformation.
+ * - {@link PARTICLEORIENTATION_SCREEN}: Particles are facing camera.
+ * - {@link PARTICLEORIENTATION_WORLD}: User defines world space normal (particleNormal) to set planes orientation.
+ * - {@link PARTICLEORIENTATION_EMITTER}: Similar to previous, but the normal is affected by emitter(entity) transformation.
  *
  * @property {Vec3} particleNormal (Only for PARTICLEORIENTATION_WORLD and PARTICLEORIENTATION_EMITTER) The exception of extents of a local space bounding box within which particles are not spawned. Aligned to the center of EmitterExtents.
  * @property {CurveSet} localVelocityGraph Velocity relative to emitter over lifetime.
@@ -194,22 +196,23 @@ class ParticleSystemComponent extends Component {
         this.on("set_normalMapAsset", this.onSetNormalMapAsset, this);
         this.on("set_meshAsset", this.onSetMeshAsset, this);
         this.on("set_mesh", this.onSetMesh, this);
+        this.on("set_renderAsset", this.onSetRenderAsset, this);
         this.on("set_loop", this.onSetLoop, this);
         this.on("set_blendType", this.onSetBlendType, this);
         this.on("set_depthSoftening", this.onSetDepthSoftening, this);
         this.on("set_layers", this.onSetLayers, this);
 
-        SIMPLE_PROPERTIES.forEach(function (prop) {
-            this.on('set_' + prop, this.onSetSimpleProperty, this);
-        }.bind(this));
+        SIMPLE_PROPERTIES.forEach((prop) => {
+            this.on(`set_${prop}`, this.onSetSimpleProperty, this);
+        });
 
-        COMPLEX_PROPERTIES.forEach(function (prop) {
-            this.on('set_' + prop, this.onSetComplexProperty, this);
-        }.bind(this));
+        COMPLEX_PROPERTIES.forEach((prop) => {
+            this.on(`set_${prop}`, this.onSetComplexProperty, this);
+        });
 
-        GRAPH_PROPERTIES.forEach(function (prop) {
-            this.on('set_' + prop, this.onSetGraphProperty, this);
-        }.bind(this));
+        GRAPH_PROPERTIES.forEach((prop) => {
+            this.on(`set_${prop}`, this.onSetGraphProperty, this);
+        });
 
         this._requestedDepth = false;
         this._drawOrder = 0;
@@ -228,9 +231,8 @@ class ParticleSystemComponent extends Component {
 
     addModelToLayers() {
         if (!this.data.model) return;
-        var layer;
-        for (var i = 0; i < this.layers.length; i++) {
-            layer = this.system.app.scene.layers.getLayerById(this.layers[i]);
+        for (let i = 0; i < this.layers.length; i++) {
+            const layer = this.system.app.scene.layers.getLayerById(this.layers[i]);
             if (!layer) continue;
             layer.addMeshInstances(this.data.model.meshInstances);
             this.emitter._layer = layer;
@@ -239,9 +241,8 @@ class ParticleSystemComponent extends Component {
 
     removeModelFromLayers(model) {
         if (!this.data.model) return;
-        var layer;
-        for (var i = 0; i < this.layers.length; i++) {
-            layer = this.system.app.scene.layers.getLayerById(this.layers[i]);
+        for (let i = 0; i < this.layers.length; i++) {
+            const layer = this.system.app.scene.layers.getLayerById(this.layers[i]);
             if (!layer) continue;
             layer.removeMeshInstances(this.data.model.meshInstances);
         }
@@ -249,15 +250,14 @@ class ParticleSystemComponent extends Component {
 
     onSetLayers(name, oldValue, newValue) {
         if (!this.data.model) return;
-        var i, layer;
-        for (i = 0; i < oldValue.length; i++) {
-            layer = this.system.app.scene.layers.getLayerById(oldValue[i]);
+        for (let i = 0; i < oldValue.length; i++) {
+            const layer = this.system.app.scene.layers.getLayerById(oldValue[i]);
             if (!layer) continue;
             layer.removeMeshInstances(this.data.model.meshInstances);
         }
         if (!this.enabled || !this.entity.enabled) return;
-        for (i = 0; i < newValue.length; i++) {
-            layer = this.system.app.scene.layers.getLayerById(newValue[i]);
+        for (let i = 0; i < newValue.length; i++) {
+            const layer = this.system.app.scene.layers.getLayerById(newValue[i]);
             if (!layer) continue;
             layer.addMeshInstances(this.data.model.meshInstances);
         }
@@ -273,14 +273,14 @@ class ParticleSystemComponent extends Component {
 
     onLayerAdded(layer) {
         if (!this.data.model) return;
-        var index = this.layers.indexOf(layer.id);
+        const index = this.layers.indexOf(layer.id);
         if (index < 0) return;
         layer.addMeshInstances(this.data.model.meshInstances);
     }
 
     onLayerRemoved(layer) {
         if (!this.data.model) return;
-        var index = this.layers.indexOf(layer.id);
+        const index = this.layers.indexOf(layer.id);
         if (index < 0) return;
         layer.removeMeshInstances(this.data.model.meshInstances);
     }
@@ -323,11 +323,9 @@ class ParticleSystemComponent extends Component {
     }
 
     onSetColorMapAsset(name, oldValue, newValue) {
-        var self = this;
-        var asset;
-        var assets = this.system.app.assets;
+        const assets = this.system.app.assets;
         if (oldValue) {
-            asset = assets.get(oldValue);
+            const asset = assets.get(oldValue);
             if (asset) {
                 this._unbindColorMapAsset(asset);
             }
@@ -339,12 +337,12 @@ class ParticleSystemComponent extends Component {
                 newValue = newValue.id;
             }
 
-            asset = assets.get(newValue);
+            const asset = assets.get(newValue);
             if (asset) {
-                self._bindColorMapAsset(asset);
+                this._bindColorMapAsset(asset);
             } else {
-                assets.once("add:" + newValue, function (asset) {
-                    self._bindColorMapAsset(asset);
+                assets.once("add:" + newValue, (asset) => {
+                    this._bindColorMapAsset(asset);
                 });
             }
         } else {
@@ -390,12 +388,10 @@ class ParticleSystemComponent extends Component {
     }
 
     onSetNormalMapAsset(name, oldValue, newValue) {
-        var self = this;
-        var asset;
-        var assets = this.system.app.assets;
+        const assets = this.system.app.assets;
 
         if (oldValue) {
-            asset = assets.get(oldValue);
+            const asset = assets.get(oldValue);
             if (asset) {
                 this._unbindNormalMapAsset(asset);
             }
@@ -407,12 +403,12 @@ class ParticleSystemComponent extends Component {
                 newValue = newValue.id;
             }
 
-            asset = assets.get(newValue);
+            const asset = assets.get(newValue);
             if (asset) {
-                self._bindNormalMapAsset(asset);
+                this._bindNormalMapAsset(asset);
             } else {
-                assets.once("add:" + newValue, function (asset) {
-                    self._bindNormalMapAsset(asset);
+                assets.once("add:" + newValue, (asset) => {
+                    this._bindNormalMapAsset(asset);
                 });
             }
         } else {
@@ -458,11 +454,10 @@ class ParticleSystemComponent extends Component {
     }
 
     onSetMeshAsset(name, oldValue, newValue) {
-        var asset;
-        var assets = this.system.app.assets;
+        const assets = this.system.app.assets;
 
         if (oldValue) {
-            asset = assets.get(oldValue);
+            const asset = assets.get(oldValue);
             if (asset) {
                 this._unbindMeshAsset(asset);
             }
@@ -474,15 +469,9 @@ class ParticleSystemComponent extends Component {
                 newValue = newValue.id;
             }
 
-            asset = assets.get(newValue);
+            const asset = assets.get(newValue);
             if (asset) {
                 this._bindMeshAsset(asset);
-
-                if (asset.resource) {
-                    this._onMeshChanged(asset.resource);
-                } else {
-                    assets.load(asset);
-                }
             }
         } else {
             this._onMeshChanged(null);
@@ -517,6 +506,85 @@ class ParticleSystemComponent extends Component {
             this.emitter.resetMaterial();
             this.rebuild();
         }
+    }
+
+    onSetRenderAsset(name, oldValue, newValue) {
+        const assets = this.system.app.assets;
+
+        if (oldValue) {
+            const asset = assets.get(oldValue);
+            if (asset) {
+                this._unbindRenderAsset(asset);
+            }
+        }
+
+        if (newValue) {
+            if (newValue instanceof Asset) {
+                this.data.renderAsset = newValue.id;
+                newValue = newValue.id;
+            }
+
+            const asset = assets.get(newValue);
+            if (asset) {
+                this._bindRenderAsset(asset);
+            }
+        } else {
+            this._onRenderChanged(null);
+        }
+    }
+
+    _bindRenderAsset(asset) {
+        asset.on('load', this._onRenderAssetLoad, this);
+        asset.on('unload', this._onRenderAssetUnload, this);
+        asset.on('remove', this._onRenderAssetRemove, this);
+
+        if (asset.resource) {
+            this._onRenderAssetLoad(asset);
+        } else {
+            // don't trigger an asset load unless the component is enabled
+            if (!this.enabled || !this.entity.enabled) return;
+            this.system.app.assets.load(asset);
+        }
+    }
+
+    _unbindRenderAsset(asset) {
+        asset.off('load', this._onRenderAssetLoad, this);
+        asset.off('unload', this._onRenderAssetUnload, this);
+        asset.off('remove', this._onRenderAssetRemove, this);
+
+        if (asset.resource) {
+            asset.resource.off('set:meshes', this._onRenderSetMeshes, this);
+        }
+    }
+
+    _onRenderAssetLoad(asset) {
+        this._onRenderChanged(asset.resource);
+    }
+
+    _onRenderAssetUnload(asset) {
+        this._onRenderChanged(null);
+    }
+
+    _onRenderAssetRemove(asset) {
+        this._onRenderAssetUnload(asset);
+    }
+
+    _onRenderChanged(render) {
+        if (!render) {
+            this._onMeshChanged(null);
+            return;
+        }
+
+        render.off('set:meshes', this._onRenderSetMeshes, this);
+        render.on('set:meshes', this._onRenderSetMeshes, this);
+
+        if (render.meshes) {
+            this._onRenderSetMeshes(render.meshes);
+        }
+    }
+
+    _onRenderSetMeshes(meshes) {
+        this._onMeshChanged(meshes && meshes[0]);
     }
 
     onSetLoop(name, oldValue, newValue) {
@@ -595,14 +663,14 @@ class ParticleSystemComponent extends Component {
 
     onEnable() {
         // get data store once
-        var data = this.data;
+        const data = this.data;
 
         // load any assets that haven't been loaded yet
-        for (var i = 0, len = ASSET_PROPERTIES.length; i < len; i++) {
-            var asset = data[ASSET_PROPERTIES[i]];
+        for (let i = 0, len = ASSET_PROPERTIES.length; i < len; i++) {
+            let asset = data[ASSET_PROPERTIES[i]];
             if (asset) {
                 if (!(asset instanceof Asset)) {
-                    var id = parseInt(asset, 10);
+                    const id = parseInt(asset, 10);
                     if (id >= 0) {
                         asset = this.system.app.assets.get(asset);
                     } else {
@@ -617,7 +685,7 @@ class ParticleSystemComponent extends Component {
         }
 
         if (!this.emitter) {
-            var mesh = data.mesh;
+            let mesh = data.mesh;
 
             // mesh might be an asset id of an asset
             // that hasn't been loaded yet
@@ -751,7 +819,7 @@ class ParticleSystemComponent extends Component {
             this.enabled = false;
         }
 
-        var data = this.data;
+        const data = this.data;
         if (data.model) {
             this.entity.removeChild(data.model.getGraph());
             data.model.destroy();
@@ -764,8 +832,8 @@ class ParticleSystemComponent extends Component {
         }
 
         // clear all asset properties to remove any event listeners
-        for (var i = 0; i < ASSET_PROPERTIES.length; i++) {
-            var prop = ASSET_PROPERTIES[i];
+        for (let i = 0; i < ASSET_PROPERTIES.length; i++) {
+            const prop = ASSET_PROPERTIES[i];
 
             if (data[prop]) {
                 this[prop] = null;
@@ -857,7 +925,7 @@ class ParticleSystemComponent extends Component {
      * @description Rebuilds all data used by this particle system.
      */
     rebuild() {
-        var enabled = this.enabled;
+        const enabled = this.enabled;
         this.enabled = false;
         if (this.emitter) {
             this.emitter.rebuild(); // worst case: required to rebuild buffers/shaders

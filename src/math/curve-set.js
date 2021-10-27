@@ -7,21 +7,21 @@ import { CurveEvaluator } from './curve-evaluator.js';
  * @name CurveSet
  * @classdesc A curve set is a collection of curves.
  * @description Creates a new curve set.
- * @param {Array<number[]>} [curveKeys] - An array of arrays of keys (pairs of numbers with
+ * @param {Array<number[]>} curveKeys - An array of arrays of keys (pairs of numbers with
  * the time first and value second).
  * @example
  * var curveSet = new pc.CurveSet([
  *     [
- *         [0, 0],
- *         [0.33, 2],
- *         [0.66, 2.6],
- *         [1, 3]
+ *         0, 0,        // At 0 time, value of 0
+ *         0.33, 2,     // At 0.33 time, value of 2
+ *         0.66, 2.6,   // At 0.66 time, value of 2.6
+ *         1, 3         // At 1 time, value of 3
  *     ],
  *     [
- *         [0, 34],
- *         [0.33, 35],
- *         [0.66, 36],
- *         [1, 37]
+ *         0, 34,
+ *         0.33, 35,
+ *         0.66, 36,
+ *         1, 37
  *     ]
  * ]);
  */
@@ -155,10 +155,10 @@ class CurveSet {
      * @type {number}
      * @description The interpolation scheme applied to all curves in the curve set. Can be:
      *
-     * * {@link CURVE_LINEAR}
-     * * {@link CURVE_SMOOTHSTEP}
-     * * {@link CURVE_SPLINE}
-     * * {@link CURVE_STEP}
+     * - {@link CURVE_LINEAR}
+     * - {@link CURVE_SMOOTHSTEP}
+     * - {@link CURVE_SPLINE}
+     * - {@link CURVE_STEP}
      *
      * Defaults to {@link CURVE_SMOOTHSTEP}.
      */

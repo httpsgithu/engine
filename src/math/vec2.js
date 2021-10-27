@@ -131,7 +131,7 @@ class Vec2 {
     /**
      * @function
      * @name Vec2#copy
-     * @description Copied the contents of a source 2-dimensional vector to a destination 2-dimensional vector.
+     * @description Copies the contents of a source 2-dimensional vector to a destination 2-dimensional vector.
      * @param {Vec2} rhs - A vector to copy to the specified vector.
      * @returns {Vec2} Self for chaining.
      * @example
@@ -593,7 +593,7 @@ class Vec2 {
      * console.log(v.toString());
      */
     toString() {
-        return '[' + this.x + ', ' + this.y + ']';
+        return `[${this.x}, ${this.y}]`;
     }
 
     /**

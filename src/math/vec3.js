@@ -148,7 +148,7 @@ class Vec3 {
     /**
      * @function
      * @name Vec3#copy
-     * @description Copied the contents of a source 3-dimensional vector to a destination 3-dimensional vector.
+     * @description Copies the contents of a source 3-dimensional vector to a destination 3-dimensional vector.
      * @param {Vec3} rhs - A vector to copy to the specified vector.
      * @returns {Vec3} Self for chaining.
      * @example
@@ -666,7 +666,7 @@ class Vec3 {
      * console.log(v.toString());
      */
     toString() {
-        return '[' + this.x + ', ' + this.y + ', ' + this.z + ']';
+        return `[${this.x}, ${this.y}, ${this.z}]`;
     }
 
     /**
